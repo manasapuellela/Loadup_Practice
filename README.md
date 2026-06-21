@@ -8,7 +8,7 @@ order-service manages orders: create, update status, cancel. Every order belongs
 
 notification-service listens for order events and records a notification: a receipt when an order is created or updated, and a completion message when an order reaches a final state.
 
-The two services don't call each other directly. order-service writes an event to its own database in the same transaction as the order, and a background poller (runs every 5 seconds) picks it up and sends it to notification-service over REST. If order-service called notification-service directly, a slow or down notification-service could fail the order creation too. The outbox approach decouples that. I considered Kafka for this, but a real broker needs its own infrastructure (topics, consumer groups) that isn't worth it at this scope, and it's not in the listed tech stack either. This is the same approach I described live in the interview when asked what happens if Kafka goes down: store the event with the order, retry later.
+The order creation/update request itself never waits on notification-service. order-service writes an outbox event in the same transaction as the order, and a separate background poller delivers it to notification-service over REST, asynchronously, outside the customer-facing request path. order-service writes an event to its own database in the same transaction as the order, and a background poller (runs every 5 seconds) picks it up and sends it to notification-service over REST. If order-service called notification-service directly, a slow or down notification-service could fail the order creation too. The outbox approach decouples that. I considered Kafka for this, but a real broker needs its own infrastructure (topics, consumer groups) that isn't worth it at this scope, and it's not in the listed tech stack either. This is the same approach I described live in the interview when asked what happens if Kafka goes down: store the event with the order, retry later.
 
 ## Multi-tenancy
 
@@ -130,7 +130,7 @@ Same for notification-service.
 
 ## What I'd add with more time
 
-- Real authentication (JWT claim instead of header), the seam for this is already isolated to the filter.
+- Correlation IDs across the two services. I discussed this in the interview (propagating an ID through HTTP and Kafka headers for cross-service tracing), but this project only has basic logging at the outbox/poller level, no actual ID generation or propagation across the REST call to notification-service. On resilience, the outbox poller already retries failed deliveries with a capped attempt count, which covers part of what a circuit breaker would address, but there's no explicit timeout configuration or breaker pattern on the HTTP call itself.
 - A formal, versioned event contract between the two services instead of an informal shared JSON shape.
 - Dead-letter handling for outbox events that exceed the retry limit, right now they're just logged and skipped.
 - Pagination on the list-orders endpoint.
