@@ -62,7 +62,14 @@ public class OrderService {
         order.setStatus(newStatus);
         Order saved = orderRepository.save(order);
 
-        String eventType = newStatus.isTerminal() ? "ORDER_COMPLETED" : "ORDER_RECEIPT";
+        String eventType;
+        if (newStatus == OrderStatus.CANCELLED) {
+            eventType = "ORDER_CANCELLED";
+        } else if (newStatus.isTerminal()) {
+            eventType = "ORDER_COMPLETED";
+        } else {
+            eventType = "ORDER_RECEIPT";
+        }
         writeOutboxEvent(saved, eventType);
 
         return saved;

@@ -5,8 +5,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
+
 
 @Entity
 @Table(name = "orders", indexes = {
@@ -28,8 +30,8 @@ public class Order {
 
     @NotNull
     @Positive
-    @Column(name = "total_amount", nullable = false)
-    private Double totalAmount;
+    @Column(name = "total_amount", nullable = false, precision = 19, scale = 2)
+    private BigDecimal totalAmount;
 
     @NotNull
     @Enumerated(EnumType.STRING)
@@ -60,7 +62,7 @@ public class Order {
     public Order() {
     }
 
-    public Order(String tenantId, String customerId, Double totalAmount) {
+    public Order(String tenantId, String customerId, BigDecimal totalAmount) {
         this.tenantId = tenantId;
         this.customerId = customerId;
         this.totalAmount = totalAmount;
@@ -90,11 +92,11 @@ public class Order {
         this.customerId = customerId;
     }
 
-    public Double getTotalAmount() {
+    public BigDecimal getTotalAmount() {
         return totalAmount;
     }
 
-    public void setTotalAmount(Double totalAmount) {
+    public void setTotalAmount(BigDecimal totalAmount) {
         this.totalAmount = totalAmount;
     }
 

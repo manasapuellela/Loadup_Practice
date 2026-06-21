@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -32,16 +33,16 @@ class OrderRepositoryTest {
     void setUp() {
         orderRepository.deleteAll();
 
-        Order orderA = new Order(TENANT_A, "cust-001", 49.99);
+        Order orderA = new Order(TENANT_A, "cust-001", BigDecimal.valueOf(49.99));
         orderA.setStatus(OrderStatus.CREATED);
         orderA = orderRepository.save(orderA);
         orderIdTenantA = orderA.getId();
 
-        Order orderA2 = new Order(TENANT_A, "cust-002", 19.99);
+        Order orderA2 = new Order(TENANT_A, "cust-002", BigDecimal.valueOf(19.99));
         orderA2.setStatus(OrderStatus.CONFIRMED);
         orderRepository.save(orderA2);
 
-        Order orderB = new Order(TENANT_B, "cust-003", 99.99);
+        Order orderB = new Order(TENANT_B, "cust-003", BigDecimal.valueOf(99.99));
         orderB.setStatus(OrderStatus.CREATED);
         orderRepository.save(orderB);
     }
@@ -101,7 +102,7 @@ class OrderRepositoryTest {
 
     @Test
     void orderPersistsWithGeneratedIdAndTimestamps() {
-        Order order = new Order(TENANT_A, "cust-999", 10.0);
+        Order order = new Order(TENANT_A, "cust-999", BigDecimal.valueOf(10.0));
         order.setStatus(OrderStatus.CREATED);
 
         Order saved = orderRepository.save(order);

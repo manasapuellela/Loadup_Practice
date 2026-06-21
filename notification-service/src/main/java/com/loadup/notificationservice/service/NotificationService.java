@@ -35,9 +35,11 @@ public class NotificationService {
             return existing.get();
         }
 
-        NotificationType type = "ORDER_COMPLETED".equals(event.eventType())
-                ? NotificationType.ORDER_COMPLETED
-                : NotificationType.ORDER_RECEIPT;
+        NotificationType type = switch (event.eventType()) {
+            case "ORDER_COMPLETED" -> NotificationType.ORDER_COMPLETED;
+            case "ORDER_CANCELLED" -> NotificationType.ORDER_CANCELLED;
+            default -> NotificationType.ORDER_RECEIPT;
+};
 
         String message = buildMessage(type, event);
 
@@ -70,11 +72,12 @@ public class NotificationService {
     private String buildMessage(NotificationType type, OrderEventRequest event) {
         return switch (type) {
             case ORDER_RECEIPT -> "Your order " + event.orderId() + " has been received. Status: " + event.status();
-            case ORDER_COMPLETED -> "Your order " + event.orderId() + " is now " + event.status() + ". Thank you!";
+            case ORDER_COMPLETED -> "Your order " + event.orderId() + " is now complete. Thank you!";
+            case ORDER_CANCELLED -> "Your order " + event.orderId() + " has been cancelled.";
         };
-    }
+}
+}
 
     // "Sending" simulation is the method used to represent where a real notification is
     // provider (email/SMS/push) would be called.persisting the Notification record IS the simulated send
     // the Notification record IS the simulated send
-}

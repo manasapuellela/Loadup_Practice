@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -55,7 +56,7 @@ class OrderServiceTest {
     @Test
     void createOrder_savesOrderAndWritesOutboxEvent_withinTenantScope() {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
-            CreateOrderRequest request = new CreateOrderRequest("cust-001", 49.99);
+            CreateOrderRequest request = new CreateOrderRequest("cust-001", BigDecimal.valueOf(49.99));
 
             when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
                 Order order = invocation.getArgument(0);
@@ -67,7 +68,7 @@ class OrderServiceTest {
 
             assertThat(result.getTenantId()).isEqualTo(TENANT_A);
             assertThat(result.getCustomerId()).isEqualTo("cust-001");
-            assertThat(result.getTotalAmount()).isEqualTo(49.99);
+            assertThat(result.getTotalAmount()).isEqualTo(BigDecimal.valueOf(49.99));
 
             verify(orderRepository, times(1)).save(any(Order.class));
             verify(outboxEventRepository, atLeastOnce()).save(any());
@@ -78,7 +79,7 @@ class OrderServiceTest {
     void updateOrderStatus_validTransition_succeedsAndWritesOutboxEvent() {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
             UUID orderId = UUID.randomUUID();
-            Order existingOrder = new Order(TENANT_A, "cust-001", 49.99);
+            Order existingOrder = new Order(TENANT_A, "cust-001", BigDecimal.valueOf(49.99));
             existingOrder.setId(orderId);
             existingOrder.setStatus(OrderStatus.CREATED);
 
@@ -97,7 +98,7 @@ class OrderServiceTest {
     void updateOrderStatus_invalidTransition_throwsInvalidTransitionException() {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
             UUID orderId = UUID.randomUUID();
-            Order existingOrder = new Order(TENANT_A, "cust-001", 49.99);
+            Order existingOrder = new Order(TENANT_A, "cust-001", BigDecimal.valueOf(49.99));
             existingOrder.setId(orderId);
             existingOrder.setStatus(OrderStatus.COMPLETED);
 
@@ -131,7 +132,7 @@ class OrderServiceTest {
     void updateOrderStatus_terminalState_writesOrderCompletedEventType() {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
             UUID orderId = UUID.randomUUID();
-            Order existingOrder = new Order(TENANT_A, "cust-001", 49.99);
+            Order existingOrder = new Order(TENANT_A, "cust-001", BigDecimal.valueOf(49.99));
             existingOrder.setId(orderId);
             existingOrder.setStatus(OrderStatus.CONFIRMED);
 
@@ -153,7 +154,7 @@ class OrderServiceTest {
     void cancelOrder_fromCreatedState_succeeds() {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
             UUID orderId = UUID.randomUUID();
-            Order existingOrder = new Order(TENANT_A, "cust-001", 49.99);
+            Order existingOrder = new Order(TENANT_A, "cust-001", BigDecimal.valueOf(49.99));
             existingOrder.setId(orderId);
             existingOrder.setStatus(OrderStatus.CREATED);
 

@@ -2,6 +2,7 @@ package com.loadup.orderservice.dto;
 
 import com.loadup.orderservice.entity.Order;
 import com.loadup.orderservice.entity.OrderStatus;
+import java.math.BigDecimal;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -10,7 +11,7 @@ public class OrderResponse {
 
     private UUID id;
     private String customerId;
-    private Double totalAmount;
+    private BigDecimal totalAmount;
     private OrderStatus status;
     private Instant createdAt;
     private Instant updatedAt;
@@ -34,7 +35,7 @@ public class OrderResponse {
         return customerId;
     }
 
-    public Double getTotalAmount() {
+    public BigDecimal getTotalAmount() {
         return totalAmount;
     }
 
