@@ -1,6 +1,8 @@
 package com.loadup.orderservice.entity;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -9,6 +11,8 @@ import java.util.UUID;
 @Table(name = "outbox_events", indexes = {
         @Index(name = "idx_outbox_processed", columnList = "processed")
 })
+@Getter
+@NoArgsConstructor
 public class OutboxEvent {
 
     @Id
@@ -24,7 +28,7 @@ public class OutboxEvent {
     @Column(name = "event_type", nullable = false, updatable = false)
     private String eventType;
 
-    @Column(name = "payload", columnDefinition = "TEXT", nullable = false, updatable = false)
+    @Column(name = "payload", columnDefinition = "TEXT")
     private String payload;
 
     @Column(name = "processed", nullable = false)
@@ -44,13 +48,18 @@ public class OutboxEvent {
         this.createdAt = Instant.now();
     }
 
-    public OutboxEvent() {
-    }
-
     public OutboxEvent(String tenantId, UUID orderId, String eventType, String payload) {
         this.tenantId = tenantId;
         this.orderId = orderId;
         this.eventType = eventType;
+        this.payload = payload;
+    }
+
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
+    public void setPayload(String payload) {
         this.payload = payload;
     }
 
@@ -62,15 +71,4 @@ public class OutboxEvent {
     public void incrementAttempt() {
         this.attemptCount++;
     }
-
-    // Getters and setters
-    public UUID getId() { return id; }
-    public String getTenantId() { return tenantId; }
-    public UUID getOrderId() { return orderId; }
-    public String getEventType() { return eventType; }
-    public String getPayload() { return payload; }
-    public boolean isProcessed() { return processed; }
-    public Instant getCreatedAt() { return createdAt; }
-    public Instant getProcessedAt() { return processedAt; }
-    public int getAttemptCount() { return attemptCount; }
 }

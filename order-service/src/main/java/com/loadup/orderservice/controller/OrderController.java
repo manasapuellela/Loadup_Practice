@@ -48,7 +48,7 @@ public class OrderController {
     @PatchMapping("/{orderId}/status")
     public ResponseEntity<OrderResponse> updateStatus(@PathVariable UUID orderId,
                                                         @Valid @RequestBody UpdateOrderStatusRequest request) {
-        Order order = orderService.updateOrderStatus(orderId, request.getStatus());
+        Order order = orderService.updateOrderStatus(orderId, request.status());
         return ResponseEntity.ok(OrderResponse.fromEntity(order));
     }
 

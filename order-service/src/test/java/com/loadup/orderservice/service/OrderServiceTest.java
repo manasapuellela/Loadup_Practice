@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.loadup.orderservice.dto.CreateOrderRequest;
 import com.loadup.orderservice.entity.Order;
 import com.loadup.orderservice.entity.OrderStatus;
+import com.loadup.orderservice.entity.OutboxEvent;
 import com.loadup.orderservice.exception.InvalidTransitionException;
 import com.loadup.orderservice.exception.OrderNotFoundException;
 import com.loadup.orderservice.repository.OrderRepository;
@@ -40,14 +41,21 @@ class OrderServiceTest {
     @BeforeEach
     void setUp() {
         orderService = new OrderService(orderRepository, outboxEventRepository, new ObjectMapper());
+
+        lenient().when(outboxEventRepository.save(any(OutboxEvent.class)))
+                .thenAnswer(invocation -> {
+                    OutboxEvent event = invocation.getArgument(0);
+                    if (event.getId() == null) {
+                        event.setId(UUID.randomUUID());
+                    }
+                    return event;
+                });
     }
 
     @Test
     void createOrder_savesOrderAndWritesOutboxEvent_withinTenantScope() {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
-            CreateOrderRequest request = new CreateOrderRequest();
-            request.setCustomerId("cust-001");
-            request.setTotalAmount(49.99);
+            CreateOrderRequest request = new CreateOrderRequest("cust-001", 49.99);
 
             when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
                 Order order = invocation.getArgument(0);
@@ -62,7 +70,7 @@ class OrderServiceTest {
             assertThat(result.getTotalAmount()).isEqualTo(49.99);
 
             verify(orderRepository, times(1)).save(any(Order.class));
-            verify(outboxEventRepository, times(1)).save(any());
+            verify(outboxEventRepository, atLeastOnce()).save(any());
         });
     }
 
@@ -81,7 +89,7 @@ class OrderServiceTest {
             Order result = orderService.updateOrderStatus(orderId, OrderStatus.CONFIRMED);
 
             assertThat(result.getStatus()).isEqualTo(OrderStatus.CONFIRMED);
-            verify(outboxEventRepository, times(1)).save(any());
+            verify(outboxEventRepository, atLeastOnce()).save(any());
         });
     }
 
@@ -131,13 +139,13 @@ class OrderServiceTest {
                     .thenReturn(Optional.of(existingOrder));
             when(orderRepository.save(any(Order.class))).thenAnswer(inv -> inv.getArgument(0));
 
-            ArgumentCaptor<com.loadup.orderservice.entity.OutboxEvent> captor =
-                    ArgumentCaptor.forClass(com.loadup.orderservice.entity.OutboxEvent.class);
+            ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
 
             orderService.updateOrderStatus(orderId, OrderStatus.COMPLETED);
 
-            verify(outboxEventRepository).save(captor.capture());
-            assertThat(captor.getValue().getEventType()).isEqualTo("ORDER_COMPLETED");
+            verify(outboxEventRepository, atLeastOnce()).save(captor.capture());
+            assertThat(captor.getAllValues())
+                    .anyMatch(e -> "ORDER_COMPLETED".equals(e.getEventType()));
         });
     }
 

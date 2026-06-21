@@ -1,6 +1,8 @@
 package com.loadup.notificationservice.entity;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -8,12 +10,19 @@ import java.util.UUID;
 @Entity
 @Table(name = "notifications", indexes = {
         @Index(name = "idx_notifications_tenant_id", columnList = "tenant_id")
+}, uniqueConstraints = {
+        @UniqueConstraint(name = "uq_notifications_source_event_id", columnNames = "source_event_id")
 })
+@Getter
+@NoArgsConstructor
 public class Notification {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
+
+    @Column(name = "source_event_id", nullable = false, updatable = false)
+    private UUID sourceEventId;
 
     @Column(name = "tenant_id", nullable = false, updatable = false)
     private String tenantId;
@@ -39,23 +48,13 @@ public class Notification {
         this.sentAt = Instant.now();
     }
 
-    public Notification() {
-    }
-
-    public Notification(String tenantId, UUID orderId, String customerId,
+    public Notification(UUID sourceEventId, String tenantId, UUID orderId, String customerId,
                          NotificationType notificationType, String message) {
+        this.sourceEventId = sourceEventId;
         this.tenantId = tenantId;
         this.orderId = orderId;
         this.customerId = customerId;
         this.notificationType = notificationType;
         this.message = message;
     }
-
-    public UUID getId() { return id; }
-    public String getTenantId() { return tenantId; }
-    public UUID getOrderId() { return orderId; }
-    public String getCustomerId() { return customerId; }
-    public NotificationType getNotificationType() { return notificationType; }
-    public String getMessage() { return message; }
-    public Instant getSentAt() { return sentAt; }
 }

@@ -36,13 +36,13 @@ public class OrderService {
     @Transactional
     public Order createOrder(CreateOrderRequest request) {
         String tenantId = TenantContext.getCurrentTenantId();
-    
-        Order order = new Order(tenantId, request.getCustomerId(), request.getTotalAmount());
+
+        Order order = new Order(tenantId, request.customerId(), request.totalAmount());
         order.setStatus(OrderStatus.CREATED);
         Order saved = orderRepository.save(order);
-    
+
         writeOutboxEvent(saved, "ORDER_RECEIPT");
-    
+
         return saved;
     }
 
@@ -86,7 +86,13 @@ public class OrderService {
 
     private void writeOutboxEvent(Order order, String eventType) {
         try {
+            OutboxEvent outboxEvent = new OutboxEvent(
+                    order.getTenantId(), order.getId(), eventType, null
+            );
+            outboxEvent = outboxEventRepository.save(outboxEvent);
+
             Map<String, Object> eventPayload = new HashMap<>();
+            eventPayload.put("eventId", outboxEvent.getId());
             eventPayload.put("orderId", order.getId());
             eventPayload.put("tenantId", order.getTenantId());
             eventPayload.put("customerId", order.getCustomerId());
@@ -94,10 +100,7 @@ public class OrderService {
             eventPayload.put("eventType", eventType);
 
             String payloadJson = objectMapper.writeValueAsString(eventPayload);
-
-            OutboxEvent outboxEvent = new OutboxEvent(
-                    order.getTenantId(), order.getId(), eventType, payloadJson
-            );
+            outboxEvent.setPayload(payloadJson);
             outboxEventRepository.save(outboxEvent);
         } catch (Exception e) {
             throw new RuntimeException("Failed to write outbox event", e);
