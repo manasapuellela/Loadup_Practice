@@ -19,6 +19,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,8 +43,10 @@ class NotificationServiceTest {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
             OrderEventRequest event = buildEvent(UUID.randomUUID(), TENANT_A, "ORDER_RECEIPT", "CREATED");
 
-            when(notificationRepository.findBySourceEventId(any(UUID.class)))
+            when(notificationRepository.findBySourceEventIdAndTenantId(any(UUID.class), eq(TENANT_A)))
                     .thenReturn(Optional.empty());
+            when(notificationRepository.existsBySourceEventId(any(UUID.class)))
+                    .thenReturn(false);
             when(notificationRepository.save(any(Notification.class)))
                     .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -74,8 +77,10 @@ class NotificationServiceTest {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
             OrderEventRequest event = buildEvent(UUID.randomUUID(), TENANT_A, "ORDER_RECEIPT", "CREATED");
 
-            when(notificationRepository.findBySourceEventId(any(UUID.class)))
+            when(notificationRepository.findBySourceEventIdAndTenantId(any(UUID.class), eq(TENANT_A)))
                     .thenReturn(Optional.empty());
+            when(notificationRepository.existsBySourceEventId(any(UUID.class)))
+                    .thenReturn(false);
 
             ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
             when(notificationRepository.save(any(Notification.class)))
@@ -93,8 +98,10 @@ class NotificationServiceTest {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
             OrderEventRequest event = buildEvent(UUID.randomUUID(), TENANT_A, "ORDER_COMPLETED", "COMPLETED");
 
-            when(notificationRepository.findBySourceEventId(any(UUID.class)))
+            when(notificationRepository.findBySourceEventIdAndTenantId(any(UUID.class), eq(TENANT_A)))
                     .thenReturn(Optional.empty());
+            when(notificationRepository.existsBySourceEventId(any(UUID.class)))
+                    .thenReturn(false);
             when(notificationRepository.save(any(Notification.class)))
                     .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -105,7 +112,25 @@ class NotificationServiceTest {
     }
 
     @Test
-    void recordOrderEvent_returnsExistingNotification_whenEventIdAlreadyProcessed_doesNotInsertDuplicate() {
+    void recordOrderEvent_setsOrderCancelledType_whenEventTypeIsOrderCancelled() {
+        ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
+            OrderEventRequest event = buildEvent(UUID.randomUUID(), TENANT_A, "ORDER_CANCELLED", "CANCELLED");
+
+            when(notificationRepository.findBySourceEventIdAndTenantId(any(UUID.class), eq(TENANT_A)))
+                    .thenReturn(Optional.empty());
+            when(notificationRepository.existsBySourceEventId(any(UUID.class)))
+                    .thenReturn(false);
+            when(notificationRepository.save(any(Notification.class)))
+                    .thenAnswer(invocation -> invocation.getArgument(0));
+
+            Notification result = notificationService.recordOrderEvent(event);
+
+            assertThat(result.getNotificationType()).isEqualTo(NotificationType.ORDER_CANCELLED);
+        });
+    }
+
+    @Test
+    void recordOrderEvent_returnsExistingNotification_whenEventIdAlreadyProcessedForSameTenant_doesNotInsertDuplicate() {
         ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
             UUID eventId = UUID.randomUUID();
             OrderEventRequest event = buildEvent(eventId, TENANT_A, "ORDER_RECEIPT", "CREATED");
@@ -115,12 +140,30 @@ class NotificationServiceTest {
                     NotificationType.ORDER_RECEIPT, "Your order has been received."
             );
 
-            when(notificationRepository.findBySourceEventId(eventId))
+            when(notificationRepository.findBySourceEventIdAndTenantId(eventId, TENANT_A))
                     .thenReturn(Optional.of(alreadySaved));
 
             Notification result = notificationService.recordOrderEvent(event);
 
             assertThat(result).isSameAs(alreadySaved);
+            verify(notificationRepository, never()).save(any());
+        });
+    }
+
+    @Test
+    void recordOrderEvent_throwsTenantMismatchException_whenEventIdBelongsToDifferentTenant() {
+        ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
+            UUID eventId = UUID.randomUUID();
+            OrderEventRequest event = buildEvent(eventId, TENANT_A, "ORDER_RECEIPT", "CREATED");
+
+            when(notificationRepository.findBySourceEventIdAndTenantId(eventId, TENANT_A))
+                    .thenReturn(Optional.empty());
+            when(notificationRepository.existsBySourceEventId(eventId))
+                    .thenReturn(true);
+
+            assertThatThrownBy(() -> notificationService.recordOrderEvent(event))
+                    .isInstanceOf(TenantMismatchException.class);
+
             verify(notificationRepository, never()).save(any());
         });
     }

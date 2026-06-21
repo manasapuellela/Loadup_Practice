@@ -130,9 +130,15 @@ Same for notification-service.
 
 ## What I'd add with more time
 
+## What I'd add with more time
+
+- Real authentication (JWT claim instead of header), the seam for this is already isolated to the filter.
 - Correlation IDs across the two services. I discussed this in the interview (propagating an ID through HTTP and Kafka headers for cross-service tracing), but this project only has basic logging at the outbox/poller level, no actual ID generation or propagation across the REST call to notification-service. On resilience, the outbox poller already retries failed deliveries with a capped attempt count, which covers part of what a circuit breaker would address, but there's no explicit timeout configuration or breaker pattern on the HTTP call itself.
 - A formal, versioned event contract between the two services instead of an informal shared JSON shape.
 - Dead-letter handling for outbox events that exceed the retry limit, right now they're just logged and skipped.
 - Pagination on the list-orders endpoint.
 - Compare Hibernate's `@Filter` against the explicit tenant-scoped repository methods I used, at scale.
-- Repository-level integration tests specifically for notification-service (currently only order-service has them).
+- Additional test coverage: HTTP-level tests confirming a missing tenant header returns a structured 400, an end-to-end test confirming one tenant genuinely cannot read/update/cancel another tenant's order through the live API (not just at the repository layer), OutboxPublisher tests for both successful delivery and failure/retry behavior, and a repository-level integration test for notification-service (currently only order-service has one).
+- A `NotificationResponse` record, so notification-service returns a controlled API shape instead of the raw JPA entity, consistent with how order-service uses `OrderResponse`.
+- Unify the missing-tenant-header error response with the same structured format the global exception handler uses everywhere else, right now that one error path is built manually inside the filter and has a slightly different shape.
+- Reject unknown event types explicitly instead of defaulting them to `ORDER_RECEIPT`.
