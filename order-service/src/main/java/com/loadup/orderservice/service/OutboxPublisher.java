@@ -23,6 +23,7 @@ public class OutboxPublisher {
     private final RestClient restClient;
     private final String notificationServiceUrl;
 
+    // RestClient over WebClient: this poller processes events sequentially by design, so it doesn't need WebClient's reactive, non-blocking semantics.
     public OutboxPublisher(OutboxEventRepository outboxEventRepository,
                             @Value("${notification-service.base-url}") String notificationServiceUrl) {
         this.outboxEventRepository = outboxEventRepository;
@@ -30,6 +31,7 @@ public class OutboxPublisher {
         this.restClient = RestClient.create();
     }
 
+    // Runs on its own clock, independent of any HTTP request, this is what keeps order creation from ever waiting on notification-service.
     @Scheduled(fixedDelayString = "${outbox.poll-interval-ms}")
     public void publishPendingEvents() {
         List<OutboxEvent> pending = outboxEventRepository.findTop50ByProcessedFalseOrderByCreatedAtAsc();
@@ -38,6 +40,8 @@ public class OutboxPublisher {
             if (event.getAttemptCount() >= MAX_ATTEMPTS) {
                 log.error("Outbox event {} exceeded max attempts ({}), skipping", event.getId(), MAX_ATTEMPTS);
                 continue;
+                // Skipped, not deleted, the row stays in the table as a record of the failure. 
+                // A real production system would route this to a dead-letter table or alert instead of just logging it.
             }
             dispatch(event);
         }
@@ -48,6 +52,8 @@ public class OutboxPublisher {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("X-Tenant-Id", event.getTenantId());
+            // The tenant header is forwarded here too, multi-tenancy doesn't stop at order-service, 
+            // notification-service enforces it again independently on its own side.
 
             restClient.post()
                     .uri(notificationServiceUrl + "/api/notifications/order-events")
@@ -65,6 +71,7 @@ public class OutboxPublisher {
             outboxEventRepository.save(event);
             log.warn("Failed to dispatch outbox event {} (attempt {}): {}",
                     event.getId(), event.getAttemptCount(), e.getMessage());
+            // Left unprocessed on purpose, the next scheduled run picks this event back up automatically, no manual retry needed.
         }
     }
 }

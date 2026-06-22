@@ -33,6 +33,8 @@ public class OrderService {
         this.objectMapper = objectMapper;
     }
 
+    // Status is set explicitly here rather than relying solely on the entity's @PrePersist default, 
+    // so the service layer's intent doesn't depend on a lifecycle hook firing correctly.
     @Transactional
     public Order createOrder(CreateOrderRequest request) {
         String tenantId = TenantContext.getCurrentTenantId();
@@ -44,8 +46,10 @@ public class OrderService {
         writeOutboxEvent(saved, "ORDER_RECEIPT");
 
         return saved;
+        // The outbox write happens in this same @Transactional method, so the order and its event either both commit or both roll back together.
     }
 
+    // Centralizes the transition check, lookup, and outbox write so update and cancel both go through the same guarantees.
     @Transactional
     public Order updateOrderStatus(UUID orderId, OrderStatus newStatus) {
         String tenantId = TenantContext.getCurrentTenantId();
@@ -57,11 +61,13 @@ public class OrderService {
 
         if (!currentStatus.canTransitionTo(newStatus)) {
             throw new InvalidTransitionException(currentStatus, newStatus);
+            // The enum itself decides what's valid, this method never duplicates that rule, it only enforces whatever the enum says.
         }
 
         order.setStatus(newStatus);
         Order saved = orderRepository.save(order);
 
+        // Cancellation gets its own event type, it was previously collapsed into ORDER_COMPLETED, which produced a confusing "is now CANCELLED. Thank you!" message. Each terminal outcome now has distinct wording.
         String eventType;
         if (newStatus == OrderStatus.CANCELLED) {
             eventType = "ORDER_CANCELLED";
@@ -70,11 +76,13 @@ public class OrderService {
         } else {
             eventType = "ORDER_RECEIPT";
         }
+
         writeOutboxEvent(saved, eventType);
 
         return saved;
     }
 
+    // Cancellation is just a transition like any other, it reuses the same validation and outbox logic rather than duplicating cancel-specific rules.
     @Transactional
     public Order cancelOrder(UUID orderId) {
         return updateOrderStatus(orderId, OrderStatus.CANCELLED);
@@ -91,6 +99,8 @@ public class OrderService {
         return orderRepository.findAllByTenantId(tenantId);
     }
 
+    // The event is saved twice on purpose: once to get a generated ID, once more to embed that same ID inside its own JSON payload as eventId, which
+    // is what makes the idempotency check on notification-service possible.
     private void writeOutboxEvent(Order order, String eventType) {
         try {
             OutboxEvent outboxEvent = new OutboxEvent(
@@ -111,6 +121,7 @@ public class OrderService {
             outboxEventRepository.save(outboxEvent);
         } catch (Exception e) {
             throw new RuntimeException("Failed to write outbox event", e);
+            // If this ever throws, the whole transaction rolls back, an order is never left without a corresponding outbox event.
         }
     }
 }

@@ -43,9 +43,11 @@ public class Notification {
     @Column(name = "sent_at", nullable = false, updatable = false)
     private Instant sentAt;
 
+    // Sets the timestamp at the moment of persistence & not at object construction.
     @PrePersist
     protected void onCreate() {
         this.sentAt = Instant.now();
+        // Every field on this entity is updatable = false, so sentAt, once set here, can never be changed again. This row is a permanent record. 
     }
 
     public Notification(UUID sourceEventId, String tenantId, UUID orderId, String customerId,

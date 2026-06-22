@@ -28,6 +28,8 @@ public class OutboxEvent {
     @Column(name = "event_type", nullable = false, updatable = false)
     private String eventType;
 
+    // No updatable = false here on purpose, unlike every other field. 
+    // The payload is written twice: once null, once with the real JSON once the row's own generated ID exists to embed inside it.
     @Column(name = "payload", columnDefinition = "TEXT")
     private String payload;
 
@@ -55,6 +57,7 @@ public class OutboxEvent {
         this.payload = payload;
     }
 
+    // Only id and payload have manual setters, not @Setter on the class, every other field should only change through these named methods, never through a generic setter that bypasses the intended business rule.
     public void setId(UUID id) {
         this.id = id;
     }

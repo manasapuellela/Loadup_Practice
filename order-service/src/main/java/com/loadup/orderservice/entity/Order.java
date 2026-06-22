@@ -4,22 +4,29 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-
 @Entity
 @Table(name = "orders", indexes = {
         @Index(name = "idx_orders_tenant_id", columnList = "tenant_id")
 })
+@Getter
+@Setter
+@NoArgsConstructor
 public class Order {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    // updatable = false enforces immutability at the database level.
+    // Even if application code calls setTenantId() on an existing order, Hibernate excludes this column from the generated UPDATE statement entirely.
     @NotBlank
     @Column(name = "tenant_id", nullable = false, updatable = false)
     private String tenantId;
@@ -28,6 +35,7 @@ public class Order {
     @Column(name = "customer_id", nullable = false)
     private String customerId;
 
+    // BigDecimal, not Double, money needs exact decimal representation, floating point arithmetic can silently drift on currency values.
     @NotNull
     @Positive
     @Column(name = "total_amount", nullable = false, precision = 19, scale = 2)
@@ -44,6 +52,7 @@ public class Order {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    // Defaults status to CREATED if nothing set it explicitly, a safety net, not the primary mechanism, OrderService sets status directly too.
     @PrePersist
     protected void onCreate() {
         Instant now = Instant.now();
@@ -59,60 +68,9 @@ public class Order {
         this.updatedAt = Instant.now();
     }
 
-    public Order() {
-    }
-
     public Order(String tenantId, String customerId, BigDecimal totalAmount) {
         this.tenantId = tenantId;
         this.customerId = customerId;
         this.totalAmount = totalAmount;
-    }
-
-    public UUID getId() {
-        return id;
-    }
-
-    public void setId(UUID id) {
-        this.id = id;
-    }
-
-    public String getTenantId() {
-        return tenantId;
-    }
-
-    public void setTenantId(String tenantId) {
-        this.tenantId = tenantId;
-    }
-
-    public String getCustomerId() {
-        return customerId;
-    }
-
-    public void setCustomerId(String customerId) {
-        this.customerId = customerId;
-    }
-
-    public BigDecimal getTotalAmount() {
-        return totalAmount;
-    }
-
-    public void setTotalAmount(BigDecimal totalAmount) {
-        this.totalAmount = totalAmount;
-    }
-
-    public OrderStatus getStatus() {
-        return status;
-    }
-
-    public void setStatus(OrderStatus status) {
-        this.status = status;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public Instant getUpdatedAt() {
-        return updatedAt;
     }
 }

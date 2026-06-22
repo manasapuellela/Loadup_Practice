@@ -15,7 +15,5 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
 
     List<Notification> findAllByTenantIdAndOrderId(String tenantId, UUID orderId);
 
-    Optional<Notification> findBySourceEventIdAndTenantId(UUID sourceEventId, String tenantId);
-
-    boolean existsBySourceEventId(UUID sourceEventId);
+    Optional<Notification> findBySourceEventId(UUID sourceEventId);
 }

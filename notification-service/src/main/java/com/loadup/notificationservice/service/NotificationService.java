@@ -21,15 +21,11 @@ public class NotificationService {
         this.notificationRepository = notificationRepository;
     }
 
-    // Validates the request body's tenant ID against the trusted header context.
-    // Checks for a duplicate delivery scoped to the current tenant first (idempotent
-    // success). If the event ID exists under a different tenant, rejects it as a
-    // cross-tenant collision rather than leaking that notification.
-    // "Sending" is simulated: persisting the Notification record IS the send,
-    // per the assessment's instructions, no real email/SMS/push provider is called.
+    // Validates the request against the trusted header tenant & checks for a duplicate delivery scoped to that tenant, and only then persists.
     public Notification recordOrderEvent(OrderEventRequest event) {
         String validatedTenantId = TenantContext.getCurrentTenantId();
 
+        // Header wins over body, always. This is the fix for a real gap wherethe body's tenantId was being trusted instead of the validated header.
         if (!validatedTenantId.equals(event.tenantId())) {
             throw new TenantMismatchException(validatedTenantId, event.tenantId());
         }
@@ -38,8 +34,10 @@ public class NotificationService {
                 .findBySourceEventIdAndTenantId(event.eventId(), validatedTenantId);
         if (existing.isPresent()) {
             return existing.get();
+            // Idempotent success: a retried delivery for this tenant returns the same notification instead of creating a duplicate.
         }
-
+        // The event ID exists, but not for this tenant, this is a cross-tenant collision, not a missing record.
+        //  Reject it rather than let the unique constraint throw an unhandled database exception on insert.
         if (notificationRepository.existsBySourceEventId(event.eventId())) {
             throw new TenantMismatchException(validatedTenantId, "unknown (event belongs to a different tenant)");
         }
@@ -62,9 +60,10 @@ public class NotificationService {
         );
 
         return notificationRepository.save(notification);
+        // "Sending" is simulated: this save IS the delivery
     }
 
-    // fetches all notifications for one specific order, scoped to the current tenant
+    // Scoped to the current tenant, never returns another tenant's notifications.
     public List<Notification> getNotificationsForOrder(UUID orderId) {
         String tenantId = TenantContext.getCurrentTenantId();
         return notificationRepository.findAllByTenantIdAndOrderId(tenantId, orderId);
@@ -76,7 +75,7 @@ public class NotificationService {
         return notificationRepository.findAllByTenantId(tenantId);
     }
 
-    // builds the human-readable message text, varies by notification type
+    // Wording differs by type so a cancelled order never reads like a success.
     private String buildMessage(NotificationType type, OrderEventRequest event) {
         return switch (type) {
             case ORDER_RECEIPT -> "Your order " + event.orderId() + " has been received. Status: " + event.status();
@@ -85,7 +84,3 @@ public class NotificationService {
         };
     }
 }
-
-    // "Sending" simulation is the method used to represent where a real notification is
-    // provider (email/SMS/push) would be called.persisting the Notification record IS the simulated send
-    // the Notification record IS the simulated send
