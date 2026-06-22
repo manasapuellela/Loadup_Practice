@@ -32,17 +32,12 @@ public class OutboxPublisher {
     }
 
     // Runs on its own clock, independent of any HTTP request, this is what keeps order creation from ever waiting on notification-service.
+    // Excludes failed events from the query itself, not just at dispatch time, so an exhausted event can never occupy a batch slot and block newer events behind it.
     @Scheduled(fixedDelayString = "${outbox.poll-interval-ms}")
     public void publishPendingEvents() {
-        List<OutboxEvent> pending = outboxEventRepository.findTop50ByProcessedFalseOrderByCreatedAtAsc();
+        List<OutboxEvent> pending = outboxEventRepository.findTop50ByProcessedFalseAndFailedFalseOrderByCreatedAtAsc();
 
         for (OutboxEvent event : pending) {
-            if (event.getAttemptCount() >= MAX_ATTEMPTS) {
-                log.error("Outbox event {} exceeded max attempts ({}), skipping", event.getId(), MAX_ATTEMPTS);
-                continue;
-                // Skipped, not deleted, the row stays in the table as a record of the failure. 
-                // A real production system would route this to a dead-letter table or alert instead of just logging it.
-            }
             dispatch(event);
         }
     }
@@ -52,8 +47,7 @@ public class OutboxPublisher {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("X-Tenant-Id", event.getTenantId());
-            // The tenant header is forwarded here too, multi-tenancy doesn't stop at order-service, 
-            // notification-service enforces it again independently on its own side.
+            // The tenant header is forwarded here too, multi-tenancy doesn't stop at order-service, notification-service enforces it again independently on its own side.
 
             restClient.post()
                     .uri(notificationServiceUrl + "/api/notifications/order-events")
@@ -68,10 +62,17 @@ public class OutboxPublisher {
 
         } catch (Exception e) {
             event.incrementAttempt();
+            if (event.getAttemptCount() >= MAX_ATTEMPTS) {
+                event.markFailed();
+                // Marked failed immediately on the attempt that exhausts the retry limit, not on the next poll cycle, this is what keeps the row out of future queries.
+                // Still kept in the table, not deleted, a real production system would route this to a dead-letter table or alert instead of just logging it.
+                log.error("Outbox event {} exceeded max attempts ({}), marking as failed", event.getId(), MAX_ATTEMPTS);
+            } else {
+                log.warn("Failed to dispatch outbox event {} (attempt {}): {}",
+                        event.getId(), event.getAttemptCount(), e.getMessage());
+            }
             outboxEventRepository.save(event);
-            log.warn("Failed to dispatch outbox event {} (attempt {}): {}",
-                    event.getId(), event.getAttemptCount(), e.getMessage());
-            // Left unprocessed on purpose, the next scheduled run picks this event back up automatically, no manual retry needed.
+            // Left unprocessed (and not failed, unless the limit was just hit) on purpose,the next scheduled run picks this event back up automatically, no manual retry needed.
         }
     }
 }

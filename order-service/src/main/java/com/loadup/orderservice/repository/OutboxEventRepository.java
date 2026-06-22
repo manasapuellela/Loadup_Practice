@@ -10,5 +10,5 @@ import java.util.UUID;
 @Repository
 public interface OutboxEventRepository extends JpaRepository<OutboxEvent, UUID> {
 
-    List<OutboxEvent> findTop50ByProcessedFalseOrderByCreatedAtAsc();
+    List<OutboxEvent> findTop50ByProcessedFalseAndFailedFalseOrderByCreatedAtAsc();
 }
