@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -165,6 +166,31 @@ class NotificationServiceTest {
                     .isInstanceOf(TenantMismatchException.class);
 
             verify(notificationRepository, never()).save(any());
+        });
+    }
+
+    @Test
+    void recordOrderEvent_recoversGracefully_whenConcurrentSaveViolatesUniqueConstraint() {
+        ScopedValue.where(TenantContext.TENANT_ID, TENANT_A).run(() -> {
+            UUID eventId = UUID.randomUUID();
+            OrderEventRequest event = buildEvent(eventId, TENANT_A, "ORDER_RECEIPT", "CREATED");
+
+            Notification winningRow = new Notification(
+                    eventId, TENANT_A, event.orderId(), "cust-001",
+                    NotificationType.ORDER_RECEIPT, "Your order has been received."
+            );
+
+            when(notificationRepository.findBySourceEventIdAndTenantId(eventId, TENANT_A))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(winningRow));
+            when(notificationRepository.existsBySourceEventId(eventId))
+                    .thenReturn(false);
+            when(notificationRepository.save(any(Notification.class)))
+                    .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
+
+            Notification result = notificationService.recordOrderEvent(event);
+
+            assertThat(result).isSameAs(winningRow);
         });
     }
 

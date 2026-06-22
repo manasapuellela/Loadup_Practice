@@ -6,6 +6,7 @@ import com.loadup.notificationservice.entity.NotificationType;
 import com.loadup.notificationservice.exception.TenantMismatchException;
 import com.loadup.notificationservice.repository.NotificationRepository;
 import com.loadup.notificationservice.tenant.TenantContext;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -21,11 +22,13 @@ public class NotificationService {
         this.notificationRepository = notificationRepository;
     }
 
-    // Validates the request against the trusted header tenant & checks for a duplicate delivery scoped to that tenant, and only then persists.
+    // Validates the request against the trusted header tenant, checks for a
+    // duplicate delivery scoped to that tenant, and only then persists.
     public Notification recordOrderEvent(OrderEventRequest event) {
         String validatedTenantId = TenantContext.getCurrentTenantId();
 
-        // Header wins over body, always. This is the fix for a real gap wherethe body's tenantId was being trusted instead of the validated header.
+        // Header wins over body, always. This is the fix for a real gap where
+        // the body's tenantId was being trusted instead of the validated header.
         if (!validatedTenantId.equals(event.tenantId())) {
             throw new TenantMismatchException(validatedTenantId, event.tenantId());
         }
@@ -34,10 +37,13 @@ public class NotificationService {
                 .findBySourceEventIdAndTenantId(event.eventId(), validatedTenantId);
         if (existing.isPresent()) {
             return existing.get();
-            // Idempotent success: a retried delivery for this tenant returns the same notification instead of creating a duplicate.
+            // Idempotent success: a retried delivery for this tenant returns the
+            // same notification instead of creating a duplicate.
         }
-        // The event ID exists, but not for this tenant, this is a cross-tenant collision, not a missing record.
-        //  Reject it rather than let the unique constraint throw an unhandled database exception on insert.
+
+        // The event ID exists, but not for this tenant, this is a cross-tenant
+        // collision, not a missing record. Reject it rather than let the unique
+        // constraint throw an unhandled database exception on insert.
         if (notificationRepository.existsBySourceEventId(event.eventId())) {
             throw new TenantMismatchException(validatedTenantId, "unknown (event belongs to a different tenant)");
         }
@@ -59,8 +65,14 @@ public class NotificationService {
                 message
         );
 
-        return notificationRepository.save(notification);
-        // "Sending" is simulated: this save IS the delivery
+        try {
+            return notificationRepository.save(notification);
+        } catch (DataIntegrityViolationException e) {
+            // Two identical deliveries can both pass the checks above before either commits, since this method doesn't hold a lock between the lookup andthe insert. 
+            // The unique constraint on source_event_id still guarantees only one row ever exists, this just recovers gracefully for whichever request loses that race, instead of surfacing a raw 500.
+            return notificationRepository.findBySourceEventIdAndTenantId(event.eventId(), validatedTenantId)
+                    .orElseThrow(() -> e);
+        }
     }
 
     // Scoped to the current tenant, never returns another tenant's notifications.
@@ -69,7 +81,6 @@ public class NotificationService {
         return notificationRepository.findAllByTenantIdAndOrderId(tenantId, orderId);
     }
 
-    // fetches every notification belonging to the current tenant, no order filter
     public List<Notification> getAllNotifications() {
         String tenantId = TenantContext.getCurrentTenantId();
         return notificationRepository.findAllByTenantId(tenantId);
