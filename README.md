@@ -1,85 +1,167 @@
 # Microservices Assessment - Manasa P.
 
-Two Java/Spring Boot microservices for a multi-tenant e-commerce platform: order-service and notification-service.
+Two Java/Spring Boot microservices for a multi-tenant e-commerce platform:
+
+* `order-service`
+* `notification-service`
+
+The main things I focused on were tenant isolation, order lifecycle rules, and making sure notification delivery problems do not affect order creation or updates.
 
 ## Overview
 
-order-service manages orders: create, update status, cancel. Every order belongs to a tenant, and tenants can never see each other's data.
+`order-service` creates orders, updates their status, and cancels them when allowed.
 
-notification-service listens for order events and records a notification: a receipt when an order is created or updated, and a completion message when an order reaches a final state.
+`notification-service` stores a notification when an order is created, updated, completed, or cancelled.
 
-The order creation/update request itself never waits on notification-service. order-service writes an outbox event in the same transaction as the order, and a separate background poller delivers it to notification-service over REST, asynchronously, outside the customer-facing request path. order-service writes an event to its own database in the same transaction as the order, and a background poller (runs every 5 seconds) picks it up and sends it to notification-service over REST. If order-service called notification-service directly, a slow or down notification-service could fail the order creation too. The outbox approach decouples that. I considered Kafka for this, but a real broker needs its own infrastructure (topics, consumer groups) that isn't worth it at this scope, and it's not in the listed tech stack either. This approach can be used when Kafka goes down, store the event with the order, retry later.
+Every request is tied to a tenant. A tenant can only access its own orders and notifications.
+
+```text
+Client
+  |
+  |  REST request + X-Tenant-Id
+  v
+order-service
+  |
+  |  Order + OutboxEvent in one transaction
+  v
+order-db
+  |
+  |  background poller sends event over REST
+  v
+notification-service
+  |
+  v
+notification-db
+```
+
+The order request does not wait for notification-service. When an order changes, `order-service` saves an outbox event in the same transaction as the order. A background poller picks up that event and sends it to `notification-service`.
+
+This means a slow or unavailable notification-service does not fail the order request.
+
+I left Kafka out intentionally. It would add broker setup and operational overhead that are not needed for this assessment. The outbox still gives durable, asynchronous delivery.
 
 ## Multi-tenancy
 
-Every request needs a header: `X-Tenant-Id: tenant-a`. A filter checks for it before anything else runs. Missing header gets rejected with 400.
+Every API request requires:
 
-I used Java 21's ScopedValue instead of ThreadLocal to carry the tenant ID through a request. It's automatically available wherever it's needed and automatically cleaned up when the request ends, no manual cleanup.
+```text
+X-Tenant-Id: tenant-a
+```
 
-A header isn't how you'd verify identity in production, anyone could fake it. A real system would extract the tenant ID from a verified JWT after login. I used a header on purpose here, to keep the assessment focused on the isolation logic rather than building an auth system. Swapping it for a JWT claim later only touches the filter, nothing else.
+A request without this header is rejected with `400 Bad Request`.
 
-On the data side, every query that touches an order requires a tenant ID as part of the method signature. There's no method anywhere that fetches an order without one, I avoided Spring's default repository methods (like a plain findById) specifically because they don't know about tenants.
+I used Java 21 `ScopedValue` to carry the tenant ID through the request. This keeps the tenant context scoped to the request without manual `ThreadLocal` cleanup.
 
-I added a test that creates an order for tenant A, then tries to change it to tenant B and save it. The test confirms the database still shows tenant A afterward. tenant_id is marked non-updatable at the column level, so even if application code tried to change it, Hibernate won't include that column in the UPDATE statement.
+For this assessment, the tenant comes from a request header. In a production system, the tenant ID would come from a validated JWT or another authenticated identity source. Replacing the header with a JWT claim would only affect the request filter.
 
-I also caught a gap during a code review: notification-service was trusting the tenant ID from the request body instead of the validated header. Fixed it so the header is the source of truth, and a mismatch between header and body now returns a 409 instead of silently trusting the body.
+Orders and notifications both store `tenant_id`. Application code uses tenant-scoped repository methods for reads and updates, such as:
+
+```text
+findByIdAndTenantId(...)
+findAllByTenantId(...)
+findAllByTenantIdAndOrderId(...)
+```
+
+The notification service also validates that the tenant ID in an incoming event matches the tenant ID from the request header.
 
 ## Order lifecycle
 
-Four states: CREATED, CONFIRMED, COMPLETED, CANCELLED.
+Orders have four statuses:
 
-Allowed moves:
-- CREATED to CONFIRMED
-- CREATED to CANCELLED
-- CONFIRMED to COMPLETED
-- CONFIRMED to CANCELLED
+```text
+CREATED
+CONFIRMED
+COMPLETED
+CANCELLED
+```
 
-COMPLETED and CANCELLED are final. The transition rules live on the OrderStatus enum itself (canTransitionTo), not as if-statements in the service. If another part of the app ever needs to check a transition, it calls the enum directly instead of duplicating logic. An invalid move returns 409 with a clear message.
+Allowed transitions:
 
-## Idempotency
+```text
+CREATED   -> CONFIRMED
+CREATED   -> CANCELLED
+CONFIRMED -> COMPLETED
+CONFIRMED -> CANCELLED
+```
 
-The outbox poller can retry a delivery if it doesn't get a confirmed response back, even if notification-service actually processed it. Without protection, that creates duplicate notifications.
+`COMPLETED` and `CANCELLED` are terminal states.
 
-Each outbox event has its own ID, which gets passed along to notification-service as `eventId`. notification-service checks for an existing notification with that event ID before inserting, and there's also a unique constraint on the column at the database level, so even a race condition can't produce a duplicate row.
+The transition rules live in `OrderStatus`, rather than being repeated as service-layer `if` statements. Invalid transitions return `409 Conflict`.
 
-## Other decisions worth noting
+## Notification delivery and idempotency
 
-**UUIDs, not auto-increment IDs.** Sequential IDs leak information about volume. UUIDs don't.
+Order events are written to an outbox table along with the order transaction.
 
-**Each service owns its own database.** order-service and notification-service never read each other's tables. They only communicate through the outbox/event mechanism.
+The poller delivers pending events to `notification-service` over REST. If the delivery fails, the event remains pending and the attempt count increases. Events that exceed the retry limit are marked as failed and excluded from future polling.
 
-**Notifications are just database records.** The assessment says they don't need to hit a real provider, just keep a record of what would've been sent. That record is the entire "send."
+Each outbox event has a unique `eventId`.
 
-**Health checks in docker-compose.** Without them, a service can try to connect before its database has finished starting, and crash on first boot.
+If notification-service receives the same event more than once for the same tenant, it returns the already-created notification instead of creating a duplicate.
 
-**Lombok on entities, Java records on DTOs.** Cut the repetitive getter/setter code. Entities use `@Getter` (plus explicit setters only where genuinely needed, like the outbox payload, which gets written in two steps). DTOs are records since they're pure immutable data carriers, that's exactly what records are for.
+A unique database constraint on `source_event_id` is the final duplicate safeguard. If an event ID is already associated with another tenant, notification-service rejects it instead of exposing another tenant's notification.
+
+## Other decisions
+
+**UUIDs instead of sequential IDs**
+UUIDs avoid exposing record volume through predictable IDs.
+
+**Separate databases**
+Each service owns its own data. `order-service` does not read notification tables, and `notification-service` does not read order tables.
+
+**Notifications are stored records**
+The assessment does not require email, SMS, or push integration. Persisting a notification record represents the simulated send.
+
+**BigDecimal for money**
+`totalAmount` uses `BigDecimal` with database precision and scale.
+
+**Health checks in Docker Compose**
+The services wait for PostgreSQL to become healthy before starting.
 
 ## Testing
 
-Two kinds, because they catch different things:
+There are both unit and integration tests.
 
-1. **Unit tests** (OrderServiceTest, NotificationServiceTest): business logic in isolation, using mocked repositories. Covers valid/invalid transitions, event type branching, the tenant-mismatch rejection, and the idempotency short-circuit.
+### Unit tests
 
-2. **Integration tests** (OrderRepositoryTest): real queries against an in-memory H2 database, to prove the tenant-scoped queries actually work at the SQL level. The most important one tries to break tenant isolation directly and confirms the database blocks it.
+Unit tests cover:
 
-One test initially passed for the wrong reason: Hibernate returned a cached, in-memory copy instead of reading fresh from the database, which would've hidden a real bug if one existed. Added `entityManager.clear()` to force a genuine read before asserting.
+* Valid and invalid order status transitions
+* Order cancellation rules
+* Tenant-scoped order lookup
+* Notification tenant mismatch handling
+* Notification idempotency
+* Cross-tenant event-ID collision handling
+* Duplicate insert recovery after a database constraint violation
 
-## How to run it
+### Integration tests
 
-Needs Docker and Docker Compose. From the project root:
+Repository integration tests use H2 to verify tenant-scoped queries and tenant immutability behavior.
+
+## How to run
+
+Requirements:
+
+* Docker
+* Docker Compose
+
+From the project root:
 
 ```bash
-docker-compose up
+docker compose pull
+docker compose up
 ```
 
-Pulls the images from Docker Hub and starts everything. No manual setup.
+Services:
 
-- order-service: `http://localhost:8081`
-- notification-service: `http://localhost:8082`
+```text
+order-service:        http://localhost:8081
+notification-service: http://localhost:8082
+```
 
-### API examples
+## API examples
 
-**Create an order:**
+### Create an order
+
 ```bash
 curl -X POST http://localhost:8081/api/orders \
   -H "Content-Type: application/json" \
@@ -87,7 +169,8 @@ curl -X POST http://localhost:8081/api/orders \
   -d '{"customerId": "cust-001", "totalAmount": 49.99}'
 ```
 
-**Update status:**
+### Update order status
+
 ```bash
 curl -X PATCH http://localhost:8081/api/orders/{orderId}/status \
   -H "Content-Type: application/json" \
@@ -95,49 +178,59 @@ curl -X PATCH http://localhost:8081/api/orders/{orderId}/status \
   -d '{"status": "CONFIRMED"}'
 ```
 
-**Cancel:**
+### Cancel an order
+
 ```bash
 curl -X POST http://localhost:8081/api/orders/{orderId}/cancel \
   -H "X-Tenant-Id: tenant-a"
 ```
 
-**List all orders for a tenant:**
+### List orders for a tenant
+
 ```bash
-curl http://localhost:8081/api/orders -H "X-Tenant-Id: tenant-a"
+curl http://localhost:8081/api/orders \
+  -H "X-Tenant-Id: tenant-a"
 ```
 
-**Check notifications for an order:**
+### Get notifications for an order
+
 ```bash
-curl http://localhost:8082/api/notifications/order/{orderId} -H "X-Tenant-Id: tenant-a"
+curl http://localhost:8082/api/notifications/order/{orderId} \
+  -H "X-Tenant-Id: tenant-a"
 ```
 
-### Running tests
+## Running tests
 
 ```bash
 cd order-service
 mvn test
 ```
 
-Same for notification-service.
+Then:
+
+```bash
+cd ../notification-service
+mvn test
+```
 
 ## Assumptions
 
-- totalAmount must be positive.
-- customerId is a plain string, not validated against an external system.
-- The four statuses listed are the full lifecycle, nothing else was specified.
-- Notifications are permanent, no expiry or deletion.
-- An order can only be cancelled from CREATED or CONFIRMED.
+* `totalAmount` must be positive.
+* `customerId` is a plain string and is not validated against another service.
+* The four order states above are the complete lifecycle for this assessment.
+* An order can only be cancelled from `CREATED` or `CONFIRMED`.
+* Notifications are retained permanently.
+* Notification delivery is asynchronous and does not change order success or failure.
 
+## What I would add with more time
 
-## What I'd add with more time
-
-- Real authentication (JWT claim instead of header), the seam for this is already isolated to the filter.
-- Correlation IDs across the two services. While we can perform propagating an ID through HTTP and Kafka headers for cross-service tracing, this project only has basic logging at the outbox/poller level, no actual ID generation or propagation across the REST call to notification-service. On resilience, the outbox poller already retries failed deliveries with a capped attempt count, which covers part of what a circuit breaker would address, but there's no explicit timeout configuration or breaker pattern on the HTTP call itself.
-- A formal, versioned event contract between the two services instead of an informal shared JSON shape.
-- Dead-letter handling for outbox events that exceed the retry limit, right now they're just logged and skipped.
-- Pagination on the list-orders endpoint.
-- Compare Hibernate's `@Filter` against the explicit tenant-scoped repository methods I used, at scale.
-- Additional test coverage: HTTP-level tests confirming a missing tenant header returns a structured 400, an end-to-end test confirming one tenant genuinely cannot read/update/cancel another tenant's order through the live API (not just at the repository layer), OutboxPublisher tests for both successful delivery and failure/retry behavior, and a repository-level integration test for notification-service (currently only order-service has one).
-- A `NotificationResponse` record, so notification-service returns a controlled API shape instead of the raw JPA entity, consistent with how order-service uses `OrderResponse`.
-- Unify the missing-tenant-header error response with the same structured format the global exception handler uses everywhere else, right now that one error path is built manually inside the filter and has a slightly different shape.
-- Reject unknown event types explicitly instead of defaulting them to `ORDER_RECEIPT`.
+* JWT-based authentication instead of a tenant header.
+* Correlation IDs across services.
+* Explicit HTTP timeout configuration and a circuit breaker around notification delivery.
+* A versioned event contract.
+* A dead-letter process for failed outbox events.
+* Pagination for order and notification listing endpoints.
+* More controller-level and end-to-end integration tests.
+* A separate response DTO for notifications instead of returning the JPA entity directly.
+* Consistent structured error responses for missing tenant headers and application exceptions.
+* Explicit rejection of unknown event types.

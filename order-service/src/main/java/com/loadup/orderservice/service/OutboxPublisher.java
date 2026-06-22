@@ -23,7 +23,7 @@ public class OutboxPublisher {
     private final RestClient restClient;
     private final String notificationServiceUrl;
 
-    // RestClient over WebClient: this poller processes events sequentially by design, so it doesn't need WebClient's reactive, non-blocking semantics.
+    // RestClient over WebClient, this poller processes events sequentially by design, so it doesn't need WebClient's reactive, non-blocking semantics.
     public OutboxPublisher(OutboxEventRepository outboxEventRepository,
                             @Value("${notification-service.base-url}") String notificationServiceUrl) {
         this.outboxEventRepository = outboxEventRepository;
